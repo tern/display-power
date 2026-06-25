@@ -1,0 +1,60 @@
+{
+  "always-on": {
+    "label": "螢幕維持長亮",
+    "description": "螢幕與系統永不自動休眠，關閉自動亮度與電池微調暗",
+    "savedAt": "2026-06-25",
+    "pmset": {
+      "displaysleep": 0,
+      "sleep": 0,
+      "lessbright": 0
+    },
+    "powerManagement": {
+      "Battery Power": {
+        "Display Sleep Timer": 0,
+        "System Sleep Timer": 0,
+        "ReduceBrightness": false
+      },
+      "AC Power": {
+        "Display Sleep Timer": 0,
+        "System Sleep Timer": 0,
+        "ReduceBrightness": false
+      }
+    },
+    "brightness": {
+      "AppleAutoBrightnessEnabled": false,
+      "kDimBrightnessSilentOn": true
+    }
+  },
+  "battery-default": {
+    "label": "恢復電池預設",
+    "description": "電池閒置 2 分鐘關閉螢幕、接電源 10 分鐘；系統 1 分鐘睡眠；恢復自動亮度",
+    "savedAt": "2026-06-25",
+    "pmset": {
+      "battery": {
+        "displaysleep": 2,
+        "sleep": 1,
+        "lessbright": 0
+      },
+      "ac": {
+        "displaysleep": 10,
+        "sleep": 1
+      }
+    },
+    "powerManagement": {
+      "Battery Power": {
+        "Display Sleep Timer": 2,
+        "System Sleep Timer": 1,
+        "ReduceBrightness": false
+      },
+      "AC Power": {
+        "Display Sleep Timer": 10,
+        "System Sleep Timer": 1,
+        "ReduceBrightness": false
+      }
+    },
+    "brightness": {
+      "AppleAutoBrightnessEnabled": true,
+      "kDimBrightnessSilentOn": false
+    }
+  }
+}
