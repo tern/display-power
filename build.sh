@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="Display Power"
 EXEC_NAME="DisplayPower"
-VERSION="1.1.1"
+VERSION="1.1.3"
 APP_DIR="$ROOT/dist/${APP_NAME}.app"
 BINARY="$APP_DIR/Contents/MacOS/$EXEC_NAME"
 

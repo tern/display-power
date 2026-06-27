@@ -4,8 +4,8 @@ set -euo pipefail
 PRESET="${1:-}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RESOURCES_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+STABLE_SCRIPT_DIR="$HOME/.display-power/scripts"
 PRESETS_FILE="$RESOURCES_DIR/references/presets.json"
-PMSET_WRAPPER="$SCRIPT_DIR/pmset-apply.sh"
 LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.tern.display-power.caffeinate.plist"
 LABEL="com.tern.display-power.caffeinate"
 PREFS_DOMAIN="com.tern.display-power-toggle"
@@ -16,9 +16,19 @@ usage() {
   exit 1
 }
 
+ensure_stable_scripts() {
+  mkdir -p "$STABLE_SCRIPT_DIR"
+  cp -f "$SCRIPT_DIR/pmset-apply.sh" "$STABLE_SCRIPT_DIR/pmset-apply.sh" 2>/dev/null || true
+  cp -f "$SCRIPT_DIR/install-passwordless.sh" "$STABLE_SCRIPT_DIR/install-passwordless.sh" 2>/dev/null || true
+  chmod +x "$STABLE_SCRIPT_DIR/"*.sh
+}
+
 [[ -n "$PRESET" ]] || usage
 [[ -f "$PRESETS_FILE" ]] || { echo "Missing presets file: $PRESETS_FILE" >&2; exit 1; }
-chmod +x "$PMSET_WRAPPER" 2>/dev/null || true
+
+ensure_stable_scripts
+PMSET_WRAPPER="$STABLE_SCRIPT_DIR/pmset-apply.sh"
+INSTALL_PASSWORDLESS="$STABLE_SCRIPT_DIR/install-passwordless.sh"
 
 apply_brightness() {
   local auto_brightness="$1"
@@ -34,13 +44,16 @@ run_pmset() {
   if sudo -n "$PMSET_WRAPPER" "$PRESET" 2>/dev/null; then
     return 0
   fi
-  if [[ -x "$SCRIPT_DIR/install-passwordless.sh" ]]; then
-    bash "$SCRIPT_DIR/install-passwordless.sh" || true
+  if [[ -x "$INSTALL_PASSWORDLESS" ]]; then
+    bash "$INSTALL_PASSWORDLESS" || true
     if sudo -n "$PMSET_WRAPPER" "$PRESET" 2>/dev/null; then
       return 0
     fi
   fi
-  osascript -e "do shell script \"sudo ${PMSET_WRAPPER} ${PRESET}\" with administrator privileges"
+
+  osascript <<EOF
+do shell script "sudo " & quoted form of "$PMSET_WRAPPER" & " " & quoted form of "$PRESET" with administrator privileges
+EOF
 }
 
 start_caffeinate() {
