@@ -514,18 +514,31 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func showWindow() {
-        if DisplayPowerPreferences.showDockIcon {
-            NSApp.setActivationPolicy(.regular)
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        for window in NSApp.windows {
-            window.makeKeyAndOrderFront(nil)
-            window.center()
-        }
+        (NSApp.delegate as? AppDelegate)?.showMainWindow()
     }
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+}
+
+struct WindowDelegateInstaller: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            if let delegate = NSApp.delegate as? NSWindowDelegate {
+                view.window?.delegate = delegate
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let delegate = NSApp.delegate as? NSWindowDelegate {
+                nsView.window?.delegate = delegate
+            }
+        }
     }
 }
 
@@ -652,9 +665,15 @@ struct ControlPanel: View {
                     model.applyDockIconVisibility(visible)
                 }
             }
+
+            Text("關閉視窗不會結束程式，可從選單列圖示重新開啟")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)
         .frame(width: 300)
+        .background(WindowDelegateInstaller())
         .onAppear {
             model.loadPreferences()
             model.refresh()
@@ -662,7 +681,7 @@ struct ControlPanel: View {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let powerModel = DisplayPowerModel.shared
 
@@ -671,8 +690,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         powerModel.loadPreferences()
         powerModel.refresh()
 
+        attachWindowDelegates()
         NSApp.activate(ignoringOtherApps: true)
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            self?.attachWindowDelegates()
             for window in NSApp.windows {
                 window.makeKeyAndOrderFront(nil)
                 window.center()
@@ -680,13 +701,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        return false
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
-            for window in sender.windows {
-                window.makeKeyAndOrderFront(nil)
-            }
-        }
+        showMainWindow()
         return true
+    }
+
+    func showMainWindow() {
+        attachWindowDelegates()
+        if DisplayPowerPreferences.showDockIcon {
+            NSApp.setActivationPolicy(.regular)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where window.canBecomeMain {
+            window.makeKeyAndOrderFront(nil)
+            window.center()
+        }
+    }
+
+    private func attachWindowDelegates() {
+        for window in NSApp.windows where window.delegate !== self {
+            window.delegate = self
+        }
     }
 }
 
@@ -700,7 +744,7 @@ struct DisplayPowerToggleApp: App {
                 .environmentObject(DisplayPowerModel.shared)
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 300, height: 340)
+        .defaultSize(width: 300, height: 360)
         .windowResizability(.contentSize)
     }
 }
