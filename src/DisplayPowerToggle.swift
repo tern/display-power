@@ -135,18 +135,136 @@ final class DisplayPowerController {
 
 enum DisplayPowerPreferences {
     static let showMenuBarIconKey = "showMenuBarIcon"
+    static let launchAtLoginKey = "launchAtLogin"
+    static let showDockIconKey = "showDockIcon"
     static let defaults = UserDefaults(suiteName: "com.tern.display-power-toggle") ?? .standard
 
-    static var showMenuBarIcon: Bool {
-        get {
-            if defaults.object(forKey: showMenuBarIconKey) == nil {
-                return true
-            }
-            return defaults.bool(forKey: showMenuBarIconKey)
+    static func bool(forKey key: String, default defaultValue: Bool) -> Bool {
+        if defaults.object(forKey: key) == nil {
+            return defaultValue
         }
-        set {
-            defaults.set(newValue, forKey: showMenuBarIconKey)
-            defaults.synchronize()
+        return defaults.bool(forKey: key)
+    }
+
+    static func set(_ value: Bool, forKey key: String) {
+        defaults.set(value, forKey: key)
+        defaults.synchronize()
+    }
+
+    static var showMenuBarIcon: Bool {
+        get { bool(forKey: showMenuBarIconKey, default: true) }
+        set { set(newValue, forKey: showMenuBarIconKey) }
+    }
+
+    static var launchAtLogin: Bool {
+        get { bool(forKey: launchAtLoginKey, default: false) }
+        set { set(newValue, forKey: launchAtLoginKey) }
+    }
+
+    static var showDockIcon: Bool {
+        get { bool(forKey: showDockIconKey, default: true) }
+        set { set(newValue, forKey: showDockIconKey) }
+    }
+}
+
+@MainActor
+final class LaunchAtLoginController {
+    static let shared = LaunchAtLoginController()
+
+    private let label = "com.tern.display-power.launcher"
+
+    private var plistURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/LaunchAgents/\(label).plist")
+    }
+
+    func isEnabled() -> Bool {
+        FileManager.default.fileExists(atPath: plistURL.path) && isAgentLoaded()
+    }
+
+    func setEnabled(_ enabled: Bool) throws {
+        if enabled {
+            try install()
+        } else {
+            uninstall()
+        }
+    }
+
+    private func isAgentLoaded() -> Bool {
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        task.arguments = ["print", "gui/\(getuid())/\(label)"]
+        task.standardOutput = pipe
+        task.standardError = Pipe()
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private func install() throws {
+        let appPath = Bundle.main.bundlePath
+        let plist: [String: Any] = [
+            "Label": label,
+            "ProgramArguments": ["/usr/bin/open", "-a", appPath],
+            "RunAtLoad": true
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: plist,
+            format: .xml,
+            options: 0
+        )
+
+        try FileManager.default.createDirectory(
+            at: plistURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: plistURL, options: .atomic)
+
+        _ = runLaunchctl(["bootout", "gui/\(getuid())/\(label)"])
+        guard runLaunchctl(["bootstrap", "gui/\(getuid())", plistURL.path]) else {
+            throw NSError(
+                domain: "DisplayPower",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "無法啟用開機自動啟動"]
+            )
+        }
+    }
+
+    private func uninstall() {
+        _ = runLaunchctl(["bootout", "gui/\(getuid())/\(label)"])
+        try? FileManager.default.removeItem(at: plistURL)
+    }
+
+    @discardableResult
+    private func runLaunchctl(_ arguments: [String]) -> Bool {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        task.arguments = arguments
+        task.standardOutput = Pipe()
+        task.standardError = Pipe()
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+}
+
+@MainActor
+final class DockIconController {
+    static let shared = DockIconController()
+
+    func setVisible(_ visible: Bool) {
+        NSApp.setActivationPolicy(visible ? .regular : .accessory)
+        if visible {
+            NSApp.activate(ignoringOtherApps: false)
         }
     }
 }
@@ -159,7 +277,11 @@ final class DisplayPowerModel: ObservableObject {
     @Published var isApplying = false
     @Published var statusText = "讀取中…"
     @Published var showMenuBarIcon = DisplayPowerPreferences.showMenuBarIcon
+    @Published var launchAtLogin = DisplayPowerPreferences.launchAtLogin
+    @Published var showDockIcon = DisplayPowerPreferences.showDockIcon
     @Published var menuBarIconStatusText = ""
+    @Published var launchAtLoginStatusText = ""
+    @Published var dockIconStatusText = ""
 
     func applyMenuBarIconVisibility(_ visible: Bool) {
         showMenuBarIcon = visible
@@ -168,8 +290,40 @@ final class DisplayPowerModel: ObservableObject {
         StatusBarController.shared.setVisible(visible, model: self)
     }
 
-    func loadIconPreference() {
-        applyMenuBarIconVisibility(DisplayPowerPreferences.showMenuBarIcon)
+    func applyLaunchAtLogin(_ enabled: Bool) {
+        do {
+            try LaunchAtLoginController.shared.setEnabled(enabled)
+            launchAtLogin = enabled
+            DisplayPowerPreferences.launchAtLogin = enabled
+            launchAtLoginStatusText = enabled ? "登入時自動啟動：已開啟" : "登入時自動啟動：已關閉"
+        } catch {
+            launchAtLogin = LaunchAtLoginController.shared.isEnabled()
+            let alert = NSAlert()
+            alert.messageText = "無法設定開機自動啟動"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
+    }
+
+    func applyDockIconVisibility(_ visible: Bool) {
+        showDockIcon = visible
+        DisplayPowerPreferences.showDockIcon = visible
+        dockIconStatusText = visible ? "Dock 圖示：顯示中" : "Dock 圖示：已隱藏"
+        DockIconController.shared.setVisible(visible)
+    }
+
+    func loadPreferences() {
+        let menuBar = DisplayPowerPreferences.showMenuBarIcon
+        applyMenuBarIconVisibility(menuBar)
+
+        let dock = DisplayPowerPreferences.showDockIcon
+        applyDockIconVisibility(dock)
+
+        let loginEnabled = LaunchAtLoginController.shared.isEnabled()
+        launchAtLogin = loginEnabled
+        DisplayPowerPreferences.launchAtLogin = loginEnabled
+        launchAtLoginStatusText = loginEnabled ? "登入時自動啟動：已開啟" : "登入時自動啟動：已關閉"
     }
 
     func refresh() {
@@ -360,7 +514,9 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func showWindow() {
-        NSApp.setActivationPolicy(.regular)
+        if DisplayPowerPreferences.showDockIcon {
+            NSApp.setActivationPolicy(.regular)
+        }
         NSApp.activate(ignoringOtherApps: true)
         for window in NSApp.windows {
             window.makeKeyAndOrderFront(nil)
@@ -470,11 +626,37 @@ struct ControlPanel: View {
                 }
                 .controlSize(.small)
             }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("登入時自動啟動")
+                    Text(model.launchAtLoginStatusText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                AppKitSwitch(isOn: $model.launchAtLogin) { enabled in
+                    model.applyLaunchAtLogin(enabled)
+                }
+            }
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("在 Dock 顯示圖示")
+                    Text(model.dockIconStatusText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                AppKitSwitch(isOn: $model.showDockIcon) { visible in
+                    model.applyDockIconVisibility(visible)
+                }
+            }
         }
         .padding(16)
         .frame(width: 300)
         .onAppear {
-            model.loadIconPreference()
+            model.loadPreferences()
             model.refresh()
         }
     }
@@ -486,10 +668,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         StatusBarController.shared.setup(model: powerModel)
-        powerModel.loadIconPreference()
+        powerModel.loadPreferences()
         powerModel.refresh()
 
-        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async {
             for window in NSApp.windows {
@@ -519,7 +700,7 @@ struct DisplayPowerToggleApp: App {
                 .environmentObject(DisplayPowerModel.shared)
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 300, height: 250)
+        .defaultSize(width: 300, height: 340)
         .windowResizability(.contentSize)
     }
 }
